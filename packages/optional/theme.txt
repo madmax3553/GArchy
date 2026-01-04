@@ -1,0 +1,14 @@
+# Qt theming helpers
+qt5ct
+qt6ct
+
+# Example themes/icons (replace with your real choices)
+adwaita-qt5
+adwaita-qt6
+papirus-icon-theme
+
+# GTK theming helpers
+nwg-look
+
+# Cursor themes
+breeze-cursors

@@ -1,0 +1,7 @@
+# Clipboard
+wl-clipboard
+
+# Screenshot / capture tools
+grim
+slurp
+swappy

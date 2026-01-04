@@ -1,0 +1,59 @@
+# Core tools
+git
+stow
+bash
+zoxide
+eza
+starship
+reflector
+
+# Terminal file manager
+mc
+
+# Editors
+neovim
+
+# Terminals
+ghostty
+kitty
+
+# Monitoring / CLI helpers
+htop
+ripgrep
+fd
+bat
+fzf
+
+# Browsers
+qutebrowser
+
+# Wayland / compositor stack
+hyprland
+hypridle
+hyprlock
+swaync
+libnotify
+xdg-desktop-portal-hyprland
+xdg-desktop-portal-gtk
+
+# Qt Wayland integration
+qt5-wayland
+qt6-wayland
+
+# Launcher
+tofi
+
+# Bar / status
+waybar
+
+# Audio
+pipewire
+pipewire-pulse
+wireplumber
+alsa-utils
+
+# Display manager
+sddm
+
+# Fonts
+ttf-hack-nerd

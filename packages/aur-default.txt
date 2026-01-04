@@ -1,0 +1,7 @@
+# Extra browser
+zen-browser-bin
+
+# Extras
+grimblast-git
+swaync-widgets-git
+wlogout

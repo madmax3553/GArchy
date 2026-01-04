@@ -1,0 +1,13 @@
+# Dev essentials
+base-devel
+man-db
+man-pages
+
+# Languages / toolchains
+python
+python-pip
+go
+rustup
+nodejs
+npm
+pnpm

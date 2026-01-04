@@ -1,0 +1,11 @@
+# Common CLI tools / TUI niceties
+neofetch
+btop
+jq
+wget
+curl
+unzip
+zip
+tar
+gzip
+zstd

@@ -1,0 +1,3 @@
+# Optional GUI file managers
+dolphin
+thunar

@@ -1,0 +1,8 @@
+# AUR helper
+yay-bin
+
+# Primary AUR browser
+google-chrome
+
+# Wallpaper manager
+waypaper
