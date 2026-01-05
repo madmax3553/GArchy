@@ -5,7 +5,7 @@ yay-bin
 google-chrome
 
 # Launcher
-tofi
+tofi-git
 
 # Wallpaper manager
 waypaper

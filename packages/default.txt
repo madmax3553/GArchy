@@ -1,5 +1,5 @@
 # Common CLI tools / TUI niceties
-neofetch
+fastfetch
 btop
 jq
 wget
