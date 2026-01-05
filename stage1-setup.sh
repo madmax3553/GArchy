@@ -209,10 +209,25 @@ install_aur_list() {
     err "AUR helper '$AUR_HELPER' not installed; cannot install $label list."
     return 1
   fi
-  log "Installing $label AUR packages via $AUR_HELPER..."
-  "$AUR_HELPER" -S --needed --noconfirm "${pkgs[@]}"
-  # Track installed packages
-  INSTALLED_PKGS+=("${pkgs[@]}")
+  
+  log "Installing $label AUR packages via $AUR_HELPER (one at a time)..."
+  local failed_pkgs=()
+  
+  for pkg in "${pkgs[@]}"; do
+    log "Installing AUR package: $pkg"
+    if "$AUR_HELPER" -S --needed --noconfirm "$pkg" 2>&1; then
+      log "Successfully installed: $pkg"
+      INSTALLED_PKGS+=("$pkg")
+    else
+      err "Failed to install AUR package: $pkg"
+      failed_pkgs+=("$pkg")
+      log "Continuing with next package..."
+    fi
+  done
+  
+  if ((${#failed_pkgs[@]} > 0)); then
+    err "AUR packages that failed to install: ${failed_pkgs[*]}"
+  fi
 }
 
 install_aur_sets() {
