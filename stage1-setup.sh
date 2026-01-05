@@ -362,6 +362,51 @@ apply_dotfiles_stow() {
   done
 }
 
+configure_services() {
+  log "Setting up system services and configuration..."
+  
+  # Enable display manager if installed
+  if command -v sddm >/dev/null 2>&1; then
+    log "Enabling SDDM display manager..."
+    sudo systemctl enable sddm.service
+  fi
+
+  # Enable NetworkManager for WiFi
+  if command -v NetworkManager >/dev/null 2>&1 || pacman -Qi networkmanager >/dev/null 2>&1; then
+    log "Enabling NetworkManager for WiFi..."
+    sudo systemctl enable NetworkManager.service
+    sudo systemctl start NetworkManager.service || true
+  else
+    log "NetworkManager not installed - WiFi setup skipped."
+    if confirm "Install NetworkManager now for WiFi support?"; then
+      sudo pacman -S --needed --noconfirm networkmanager
+      sudo systemctl enable NetworkManager.service
+      sudo systemctl start NetworkManager.service || true
+    fi
+  fi
+
+  # Enable Bluetooth if installed
+  if pacman -Qi bluez >/dev/null 2>&1; then
+    log "Enabling Bluetooth service..."
+    sudo systemctl enable bluetooth.service
+    sudo systemctl start bluetooth.service || true
+  fi
+
+  # Add user to necessary groups
+  local current_user
+  current_user=$(id -un)
+  log "Adding user '$current_user' to video, audio, input groups..."
+  sudo usermod -aG video,audio,input "$current_user" 2>/dev/null || log "Some groups may already be assigned."
+
+  # Enable PipeWire services for current user
+  if command -v pipewire >/dev/null 2>&1; then
+    log "Enabling PipeWire audio services for user session..."
+    systemctl --user enable pipewire.service pipewire-pulse.service 2>/dev/null || true
+  fi
+
+  log "Service configuration complete."
+}
+
 main() {
   require_user_not_root
   require_arch
@@ -400,7 +445,11 @@ main() {
     log "Skipping dotfiles - using vanilla configs."
   fi
 
-  log "GArchy Stage 1 complete. Enable services and reboot to use SDDM/Hyprland."
+  echo
+  log "Configuring system services..."
+  configure_services
+
+  log "GArchy Stage 1 complete. Reboot to start SDDM/Hyprland session."
 }
 
 main "$@"
