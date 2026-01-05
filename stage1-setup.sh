@@ -75,9 +75,31 @@ install_repo_pkgs() {
     return 0
   fi
   log "Installing $label packages via pacman: ${pkgs[*]}"
-  sudo pacman -S --needed --noconfirm "${pkgs[@]}"
-  # Track installed packages
-  INSTALLED_PKGS+=("${pkgs[@]}")
+  
+  # Try to install, but don't fail if some packages are missing
+  local failed_pkgs=()
+  if ! sudo pacman -S --needed --noconfirm "${pkgs[@]}" 2>&1 | tee /tmp/pacman_install.log; then
+    # Check which packages failed
+    while IFS= read -r line; do
+      if [[ "$line" =~ "error: target not found: "(.+) ]]; then
+        failed_pkgs+=("${BASH_REMATCH[1]}")
+      fi
+    done < /tmp/pacman_install.log
+    
+    if ((${#failed_pkgs[@]} > 0)); then
+      err "Warning: Could not install: ${failed_pkgs[*]}"
+      log "Continuing with remaining packages..."
+    fi
+  fi
+  
+  # Track successfully installed packages (exclude failed ones)
+  for pkg in "${pkgs[@]}"; do
+    local is_failed=0
+    for failed in "${failed_pkgs[@]}"; do
+      [[ "$pkg" == "$failed" ]] && is_failed=1 && break
+    done
+    ((is_failed)) || INSTALLED_PKGS+=("$pkg")
+  done
 }
 
 install_pkg_list_pacman_only() {

@@ -40,8 +40,8 @@ xdg-desktop-portal-gtk
 qt5-wayland
 qt6-wayland
 
-# Launcher
-tofi
+# Launcher (moved to AUR)
+# tofi
 
 # Bar / status
 waybar

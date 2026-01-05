@@ -4,5 +4,8 @@ yay-bin
 # Primary AUR browser
 google-chrome
 
+# Launcher
+tofi
+
 # Wallpaper manager
 waypaper
