@@ -2,9 +2,11 @@
 #
 # GArchy Stage 1: Desktop & dotfiles setup for user (default 'groot')
 # - Refreshes mirrorlist with reflector (Canada, HTTPS)
+# - Interactively asks user what to install (mandatory, default, optional)
 # - Installs repo packages (mandatory, default*, optional*)
 # - Installs AUR packages (mandatory, default*, optional*) via yay-bin
-# - Clones madmax3553/dotfiles and applies them via stow, gated by installed tools
+# - Asks if user wants dotfiles or vanilla configs
+# - If dotfiles: clones madmax3553/dotfiles and stows only installed packages
 
 set -euo pipefail
 
@@ -12,6 +14,7 @@ GARCHY_ROOT="${GARCHY_ROOT:-$HOME/GArchy}"
 PKG_DIR="$GARCHY_ROOT/packages"
 DOTFILES_DIR="$HOME/dotfiles"
 AUR_HELPER="yay"   # yay-bin from AUR
+INSTALLED_PKGS=()  # Track what we installed for stow decisions
 
 log() {
   printf '\e[32m[GArchy/Stage1]\e[0m %s\n' "$*" >&2
@@ -23,7 +26,8 @@ err() {
 
 confirm() {
   local prompt="${1:-Are you sure?}"
-  read -rp "$prompt [y/N]: " ans
+  local ans
+  read -rp "$prompt [y/N]: " ans < /dev/tty
   [[ "$ans" =~ ^[Yy]$ ]]
 }
 
@@ -53,10 +57,13 @@ read_pkg_list() {
 show_pkg_list() {
   local label="$1" file="$2"
   echo
-  echo "=== $label packages from $file ==="
+  echo "========================================"
+  echo "=== $label packages ==="
+  echo "========================================"
   if ! read_pkg_list "$file" | sed 's/^/  - /'; then
     echo "  (none)"
   fi
+  echo "========================================"
   echo
 }
 
@@ -69,6 +76,8 @@ install_repo_pkgs() {
   fi
   log "Installing $label packages via pacman: ${pkgs[*]}"
   sudo pacman -S --needed --noconfirm "${pkgs[@]}"
+  # Track installed packages
+  INSTALLED_PKGS+=("${pkgs[@]}")
 }
 
 install_pkg_list_pacman_only() {
@@ -101,7 +110,9 @@ run_reflector_once() {
 install_mandatory() {
   local file="$PKG_DIR/mandatory.txt"
   show_pkg_list "Mandatory" "$file"
-  log "Installing mandatory package set (no prompt)..."
+  log "These packages are REQUIRED and will be installed automatically."
+  read -n 1 -s -r -p "Press any key to continue..." < /dev/tty
+  echo
   install_pkg_list_pacman_only "Mandatory" "$file"
 }
 
@@ -172,6 +183,8 @@ install_aur_list() {
   fi
   log "Installing $label AUR packages via $AUR_HELPER..."
   "$AUR_HELPER" -S --needed --noconfirm "${pkgs[@]}"
+  # Track installed packages
+  INSTALLED_PKGS+=("${pkgs[@]}")
 }
 
 install_aur_sets() {
@@ -221,47 +234,109 @@ apply_dotfiles_stow() {
     return 1
   fi
 
-  log "Applying dotfiles with stow (only for installed tools)..."
+  log "Determining which dotfiles to stow based on installed packages..."
   cd "$DOTFILES_DIR"
 
-  declare -A STOW_REQUIRE_CMDS=(
-    [bash]=""           # always stow shell config
-    [bin]=""            # always stow scripts
-    [nvim]="nvim"
-    [hypr]="Hyprland"
-    [rofi]="rofi tofi"
+  # Map dotfile directories to package names or commands
+  # Format: [dotfile_dir]="package_name_or_command"
+  declare -A DOTFILE_PKG_MAP=(
+    [bash]="bash"
+    [fish]="fish"
+    [bin]="ALWAYS"
+    [shell]="ALWAYS"
+    [git]="git"
+    [nvim]="neovim"
+    [vim]="vim"
+    [kitty]="kitty"
+    [ghostty]="ghostty"
+    [tmux]="tmux"
+    [hypr]="hyprland"
+    [qtile]="qtile"
+    [sway]="sway"
+    [rofi]="rofi"
+    [tofi]="tofi"
+    [waybar]="waybar"
+    [dunst]="dunst"
+    [swaync]="swaync"
     [yazi]="yazi"
     [ranger]="ranger"
-    [qtile]="qtile"
+    [vifm]="vifm"
+    [mc]="mc"
+    [btop]="btop"
+    [htop]="htop"
+    [bashtop]="bashtop"
+    [neofetch]="neofetch"
+    [starship.toml]="starship"
+    [qutebrowser]="qutebrowser"
+    [mpv]="mpv"
+    [mpd]="mpd"
+    [cava]="cava"
+    [lazygit]="lazygit"
+    [newsboat]="newsboat"
+    [glow]="glow"
+    [wlogout]="wlogout"
+    [waypaper]="waypaper"
+    [kdeconnect]="kdeconnect"
+    [wallust]="wallust"
+    [wal]="python-pywal"
+    [termusic]="termusic"
+    [calcure]="calcure"
+    [qalculate]="qalculate-gtk"
+    [sc-im]="sc-im"
+    [yay]="yay"
+    [copilot]="github-copilot-cli"
+    [github-copilot]="github-copilot-cli"
+    [cargo]="cargo"
+    [go]="go"
+    [gtk-3.0]="gtk3"
+    [gtk-4.0]="gtk4"
+    [qt5ct]="qt5ct"
+    [qt6ct]="qt6ct"
+    [pulse]="pulseaudio"
+    [pavucontrol.ini]="pavucontrol"
+    [systemd]="systemd"
+    [ssh]="openssh"
+    [x11]="xorg-server"
   )
 
-  for pkg in "${!STOW_REQUIRE_CMDS[@]}"; do
-    local pkg_dir="$DOTFILES_DIR/$pkg"
+  # Convert installed packages to lowercase for comparison
+  declare -A installed_lookup
+  for pkg in "${INSTALLED_PKGS[@]}"; do
+    installed_lookup["${pkg,,}"]=1
+  done
 
-    if [[ ! -d "$pkg_dir" ]]; then
-      log "Skipping $pkg (directory not found in dotfiles)."
+  # Stow directories where package is installed or command exists
+  for dotfile_dir in "$DOTFILES_DIR"/*/; do
+    [[ -d "$dotfile_dir" ]] || continue
+    local dir_name
+    dir_name=$(basename "$dotfile_dir")
+    
+    # Skip hidden dirs
+    [[ "$dir_name" =~ ^\. ]] && continue
+
+    local pkg_name="${DOTFILE_PKG_MAP[$dir_name]:-}"
+    
+    # If not in map, skip conservatively
+    if [[ -z "$pkg_name" ]]; then
+      log "Skipping $dir_name (not in dotfile map)."
       continue
     fi
 
-    local req="${STOW_REQUIRE_CMDS[$pkg]}"
-    local missing=0
-
-    if [[ -n "$req" ]]; then
-      for cmd in $req; do
-        if ! command -v "$cmd" >/dev/null 2>&1; then
-          missing=1
-          break
-        fi
-      done
-    fi
-
-    if (( missing )); then
-      log "Skipping $pkg (required command(s) not found: $req)."
+    # Always stow certain directories
+    if [[ "$pkg_name" == "ALWAYS" ]]; then
+      log "Stowing $dir_name (always)..."
+      stow -R "$dir_name" 2>/dev/null || log "Warning: stow failed for $dir_name"
       continue
     fi
 
-    log "Stowing $pkg..."
-    stow -R "$pkg"
+    # Check if package was installed or command exists
+    local pkg_lower="${pkg_name,,}"
+    if [[ -v installed_lookup["$pkg_lower"] ]] || command -v "$pkg_name" >/dev/null 2>&1; then
+      log "Stowing $dir_name (found: $pkg_name)..."
+      stow -R "$dir_name" 2>/dev/null || log "Warning: stow failed for $dir_name"
+    else
+      log "Skipping $dir_name (package '$pkg_name' not installed)."
+    fi
   done
 }
 
@@ -293,10 +368,17 @@ main() {
 
   install_aur_sets
 
-  clone_dotfiles
-  apply_dotfiles_stow
+  echo
+  log "Package installation complete."
+  echo
+  if confirm "Do you want to use dotfiles from github.com/madmax3553/dotfiles?"; then
+    clone_dotfiles
+    apply_dotfiles_stow
+  else
+    log "Skipping dotfiles - using vanilla configs."
+  fi
 
-  log "GArchy Stage 1 complete. Log out and start an SDDM/Hyprland session."
+  log "GArchy Stage 1 complete. Enable services and reboot to use SDDM/Hyprland."
 }
 
 main "$@"

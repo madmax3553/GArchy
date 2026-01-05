@@ -184,8 +184,9 @@ LOADER
 # Create user and enable sudo
 if ! id "$NEW_USER" >/dev/null 2>&1; then
   useradd -m -G wheel -s /bin/bash "$NEW_USER"
-  echo "Set password for user $NEW_USER:"
-  passwd "$NEW_USER"
+  echo "Setting default password 'archlinux' for user $NEW_USER"
+  echo "$NEW_USER:archlinux" | chpasswd
+  passwd -e "$NEW_USER"  # Force password change on first login
 fi
 
 pacman -S --needed --noconfirm sudo
