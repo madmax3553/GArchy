@@ -264,10 +264,42 @@ install_aur_sets() {
 clone_dotfiles() {
   if [[ -d "$DOTFILES_DIR/.git" ]]; then
     log "Dotfiles repo already present at $DOTFILES_DIR, pulling latest..."
-    git -C "$DOTFILES_DIR" pull --ff-only
+    git -C "$DOTFILES_DIR" pull --ff-only || log "Warning: Could not pull latest changes"
   else
     log "Cloning dotfiles into $DOTFILES_DIR..."
-    git clone https://github.com/madmax3553/dotfiles "$DOTFILES_DIR"
+    echo
+    log "Choose clone method:"
+    echo "  1) SSH (git@github.com:madmax3553/dotfiles.git) - requires SSH key"
+    echo "  2) HTTPS (https://github.com/madmax3553/dotfiles) - requires credentials"
+    echo "  3) Skip dotfiles clone"
+    local choice
+    read -rp "Enter choice [1/2/3]: " choice < /dev/tty
+    
+    case "$choice" in
+      1)
+        log "Cloning via SSH..."
+        if ! git clone git@github.com:madmax3553/dotfiles.git "$DOTFILES_DIR"; then
+          err "Failed to clone via SSH. Make sure your SSH key is set up."
+          err "You can set it up with: ssh-keygen && cat ~/.ssh/id_rsa.pub"
+          return 1
+        fi
+        ;;
+      2)
+        log "Cloning via HTTPS..."
+        if ! git clone https://github.com/madmax3553/dotfiles "$DOTFILES_DIR"; then
+          err "Failed to clone via HTTPS. You may need to authenticate."
+          return 1
+        fi
+        ;;
+      3)
+        log "Skipping dotfiles clone."
+        return 1
+        ;;
+      *)
+        err "Invalid choice. Skipping dotfiles."
+        return 1
+        ;;
+    esac
   fi
 }
 
@@ -460,8 +492,11 @@ main() {
   log "Package installation complete."
   echo
   if confirm "Do you want to use dotfiles from github.com/madmax3553/dotfiles?"; then
-    clone_dotfiles
-    apply_dotfiles_stow
+    if clone_dotfiles; then
+      apply_dotfiles_stow
+    else
+      log "Dotfiles setup skipped or failed."
+    fi
   else
     log "Skipping dotfiles - using vanilla configs."
   fi
