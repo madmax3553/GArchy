@@ -76,20 +76,26 @@ install_repo_pkgs() {
   fi
   log "Installing $label packages via pacman: ${pkgs[*]}"
   
-  # Try to install, but don't fail if some packages are missing
+  # Install packages, capturing output to check for failures
+  local install_output
+  install_output=$(sudo pacman -S --needed --noconfirm "${pkgs[@]}" 2>&1) || true
+  echo "$install_output"
+  
+  # Check for failed packages
   local failed_pkgs=()
-  if ! sudo pacman -S --needed --noconfirm "${pkgs[@]}" 2>&1 | tee /tmp/pacman_install.log; then
-    # Check which packages failed
-    while IFS= read -r line; do
-      if [[ "$line" =~ "error: target not found: "(.+) ]]; then
-        failed_pkgs+=("${BASH_REMATCH[1]}")
-      fi
-    done < /tmp/pacman_install.log
-    
-    if ((${#failed_pkgs[@]} > 0)); then
-      err "Warning: Could not install: ${failed_pkgs[*]}"
-      log "Continuing with remaining packages..."
+  while IFS= read -r line; do
+    if [[ "$line" =~ "error: target not found: "(.+) ]]; then
+      failed_pkgs+=("${BASH_REMATCH[1]}")
+    elif [[ "$line" =~ "could not find all required packages: "(.+) ]]; then
+      # Handle dependency errors - extract package name
+      local missing="${BASH_REMATCH[1]}"
+      failed_pkgs+=("$missing")
     fi
+  done <<< "$install_output"
+  
+  if ((${#failed_pkgs[@]} > 0)); then
+    err "Warning: Could not install some packages: ${failed_pkgs[*]}"
+    log "Continuing with remaining packages..."
   fi
   
   # Track successfully installed packages (exclude failed ones)
