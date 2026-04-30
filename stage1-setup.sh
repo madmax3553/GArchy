@@ -326,6 +326,7 @@ apply_dotfiles_stow() {
     [ghostty]="ghostty"
     [tmux]="tmux"
     [hypr]="hyprland"
+    [niri]="niri"
     [qtile]="qtile"
     [sway]="sway"
     [rofi]="rofi"

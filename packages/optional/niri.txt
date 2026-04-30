@@ -1,0 +1,9 @@
+# Niri tiling wayland compositor
+niri
+fuzzel
+swaybg
+xorg-xwayland
+waybar
+swaylock
+swayidle
+xdg-desktop-portal-gnome

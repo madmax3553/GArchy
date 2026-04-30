@@ -1,0 +1,5 @@
+# Surface Pro 2 specific packages
+linux-surface
+linux-surface-headers
+iptsd
+libwacom-surface

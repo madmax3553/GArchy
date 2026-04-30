@@ -66,9 +66,11 @@ chmod +x stage0-install.sh
   - EFI partition (512 MiB, FAT32)
   - Root partition (rest, ext4) – swap via swapfile later if desired.
 - `pacstrap` a minimal Arch system with:
-  - `base`, `linux`, `linux-firmware`
+  - `base`, `linux` (or `linux-surface`), `linux-firmware`
+  - `intel-ucode` (added for Surface/Intel support)
   - `networkmanager`, `openssh`, `sudo`, `git`
   - `sddm`, `hyprland`, `reflector`, `bash-completion`
+- **Surface Support**: Optional `linux-surface` kernel and repository integration for Microsoft Surface devices.
 - Configure:
   - Hostname, `/etc/hosts`
   - Timezone: `Canada/Eastern` (adjust later if needed)
@@ -272,6 +274,8 @@ cd /usr/local/share/GArchy
 
 ## 5. Notes & TODOs
 
+- **Surface Devices**: Stage 0 now prompts if you're on a Surface device. If 'y', it installs the `linux-surface` kernel and configures the repository.
+- **Niri Compositor**: Added optional package lists for Niri. You can install them during Stage 1 and they will be automatically configured if your dotfiles repo contains a `niri` folder.
 - Timezone in Stage 0 is hardcoded to `Canada/Eastern`. Change `/etc/localtime` symlink there if you want a different default.
 - Swap is via swapfile on root (you can add that later in Stage 1 or manually).
 - If you add or remove tools from your stack:

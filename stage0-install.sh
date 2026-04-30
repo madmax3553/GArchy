@@ -69,6 +69,11 @@ ask_username() {
   NEW_USER=${NEW_USER:-groot}
 }
 
+ask_surface() {
+  read -rp "Is this a Microsoft Surface device? [y/N]: " IS_SURFACE
+  IS_SURFACE=${IS_SURFACE:-n}
+}
+
 partition_disk() {
   log "Partitioning $DISK (GPT, EFI + root)..."
 
@@ -114,20 +119,49 @@ mount_partitions() {
 }
 
 install_base_system() {
+  if [[ "$IS_SURFACE" == "y" ]]; then
+    log "Configuring linux-surface repository on live ISO..."
+    curl -s https://raw.githubusercontent.com/linux-surface/linux-surface/master/pkg/keys/surface.asc \
+      | pacman-key --add -
+    pacman-key --lsign-key 56C464BAAC421453
+    
+    if ! grep -q "\[linux-surface\]" /etc/pacman.conf; then
+      cat <<EOT >> /etc/pacman.conf
+
+[linux-surface]
+Server = https://pkg.surfacelinux.com/arch/
+EOT
+    fi
+    pacman -Sy
+  fi
+
   log "Installing base system (this may take a while)..."
 
-  pacstrap /mnt \
-    base \
-    linux \
-    linux-firmware \
-    networkmanager \
-    openssh \
-    sudo \
-    git \
-    sddm \
-    hyprland \
-    reflector \
+  local pkgs=(
+    base
+    linux
+    linux-firmware
+    intel-ucode
+    networkmanager
+    openssh
+    sudo
+    git
+    sddm
+    hyprland
+    reflector
     bash-completion
+  )
+
+  if [[ "$IS_SURFACE" == "y" ]]; then
+    log "Adding linux-surface packages..."
+    local new_pkgs=()
+    for p in "${pkgs[@]}"; do
+      [[ "$p" == "linux" ]] || new_pkgs+=("$p")
+    done
+    pkgs=("${new_pkgs[@]}" linux-surface linux-surface-headers iptsd)
+  fi
+
+  pacstrap /mnt "${pkgs[@]}"
 }
 
 generate_fstab() {
@@ -140,6 +174,20 @@ configure_system_chroot() {
 
   arch-chroot /mnt /bin/bash <<EOF
 set -euo pipefail
+
+if [[ "$IS_SURFACE" == "y" ]]; then
+  log "Configuring linux-surface repository..."
+  curl -s https://raw.githubusercontent.com/linux-surface/linux-surface/master/pkg/keys/surface.asc \
+    | pacman-key --add -
+  pacman-key --lsign-key 56C464BAAC421453
+  
+  cat <<EOT >> /etc/pacman.conf
+
+[linux-surface]
+Server = https://pkg.surfacelinux.com/arch/
+EOT
+  pacman -Sy --noconfirm
+fi
 
 echo "$HOSTNAME" > /etc/hostname
 
@@ -163,15 +211,28 @@ systemctl enable NetworkManager
 systemctl enable sshd
 systemctl enable sddm
 
+if [[ "$IS_SURFACE" == "y" ]]; then
+  systemctl enable iptsd
+fi
+
 # Install bootloader (systemd-boot, UEFI only)
 bootctl --path=/boot install
 
 # Basic systemd-boot entry
 ROOT_UUID=\$(blkid -s UUID -o value "$ROOT_PART")
+KERNEL_IMG="vmlinuz-linux"
+INITRD_IMG="initramfs-linux.img"
+
+if [[ "$IS_SURFACE" == "y" ]]; then
+  KERNEL_IMG="vmlinuz-linux-surface"
+  INITRD_IMG="initramfs-linux-surface.img"
+fi
+
 cat <<BOOT >/boot/loader/entries/arch.conf
 title   Arch Linux (GArchy)
-linux   /vmlinuz-linux
-initrd  /initramfs-linux.img
+linux   /\$KERNEL_IMG
+initrd  /intel-ucode.img
+initrd  /\$INITRD_IMG
 options root=UUID=\$ROOT_UUID rw
 BOOT
 
@@ -213,6 +274,7 @@ main() {
   select_disk
   ask_hostname
   ask_username
+  ask_surface
 
   partition_disk
   format_partitions
