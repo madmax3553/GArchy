@@ -7,3 +7,7 @@ waybar
 swaylock
 swayidle
 xdg-desktop-portal-gnome
+brightnessctl
+pamixer
+playerctl
+cliphist
