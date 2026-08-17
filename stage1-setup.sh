@@ -51,7 +51,8 @@ read_pkg_list() {
     err "Package list file not found: $file"
     return 1
   fi
-  grep -vE '^\s*($|#)' "$file" || true
+  # Strip inline comments and surrounding whitespace, drop blank/comment lines
+  sed -e 's/#.*//' -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' "$file" | grep -vE '^$' || true
 }
 
 show_pkg_list() {
@@ -419,10 +420,15 @@ apply_dotfiles_stow() {
 configure_services() {
   log "Setting up system services and configuration..."
   
-  # Enable display manager if installed
-  if command -v sddm >/dev/null 2>&1; then
-    log "Enabling SDDM display manager..."
-    sudo systemctl enable sddm.service
+  # Enable greetd display manager if installed
+  if pacman -Qi greetd >/dev/null 2>&1; then
+    log "Enabling greetd display manager..."
+    sudo systemctl enable greetd.service
+  fi
+
+  # If the sysc-greet-hyprland greeter is installed, make greetd use it
+  if pacman -Qi sysc-greet-hyprland >/dev/null 2>&1; then
+    log "sysc-greet-hyprland installed; greetd config from the package will be used."
   fi
 
   # Enable NetworkManager for WiFi
@@ -506,7 +512,7 @@ main() {
   log "Configuring system services..."
   configure_services
 
-  log "GArchy Stage 1 complete. Reboot to start SDDM/Hyprland session."
+  log "GArchy Stage 1 complete. Reboot to start greetd/Hyprland session."
 }
 
 main "$@"

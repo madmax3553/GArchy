@@ -52,8 +52,9 @@ pipewire-pulse
 wireplumber
 alsa-utils
 
-# Display manager
-sddm
+# Display manager (greetd; sysc-greet-hyprland greeter comes from AUR)
+greetd
+uwsm
 
 # Fonts
 ttf-hack-nerd

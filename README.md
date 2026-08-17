@@ -64,26 +64,52 @@ chmod +x stage0-install.sh
   - `username` (default: `groot`)
 - Partition the selected disk (GPT):
   - EFI partition (512 MiB, FAT32)
-  - Root partition (rest, ext4) – swap via swapfile later if desired.
+  - Root partition (rest, ext4) – swap via **zram** (`zram-generator`).
 - `pacstrap` a minimal Arch system with:
   - `base`, `linux` (or `linux-surface`), `linux-firmware`
-  - `intel-ucode` (added for Surface/Intel support)
+  - `amd-ucode` / `intel-ucode` (auto-detected; override with `--ucode`)
+  - `grub`, `efibootmgr`, `zram-generator`
   - `networkmanager`, `openssh`, `sudo`, `git`
-  - `sddm`, `hyprland`, `reflector`, `bash-completion`
+  - `greetd`, `hyprland`, `uwsm`, `reflector`, `bash-completion`
 - **Surface Support**: Optional `linux-surface` kernel and repository integration for Microsoft Surface devices.
 - Configure:
   - Hostname, `/etc/hosts`
   - Timezone: `Canada/Eastern` (adjust later if needed)
   - Locale: `en_US.UTF-8`
-- Install systemd-boot and create a basic boot entry.
+- Install GRUB (UEFI, `--removable` so the disk boots on any machine).
 - Create user (default `groot`) in `wheel`, enable `sudo` for `wheel`.
 - Enable services:
   - `NetworkManager`
   - `sshd`
-  - `sddm`
+  - `greetd`
 - Clone `GArchy` into `/home/<user>/GArchy`.
 
 When Stage 0 completes, it will tell you to reboot into the new system.
+
+### 1.4 Headless install to an attached SSD (`--from-host`)
+
+You don't need the ISO or a monitor at all: attach the target SSD to an
+existing Arch machine (USB adapter is fine) and install directly onto it:
+
+```bash
+sudo ./stage0-install.sh --from-host --disk /dev/sdX --ucode amd --hostname garchy --user groot
+```
+
+Flags:
+
+- `--from-host` – run from a normal Arch system instead of the live ISO.
+- `--disk` – target disk (skips the interactive disk prompt).
+- `--ucode amd|intel|both` – microcode for the **target** machine's CPU
+  (auto-detect uses the host CPU, which may be wrong when cross-installing).
+- `--hostname`, `--user`, `--surface` – skip the corresponding prompts.
+
+Then move the SSD to the target machine and power it on. It boots straight
+into the installed system with DHCP + sshd enabled:
+
+```bash
+ssh groot@<target-ip>     # password: archlinux (change forced on first login)
+cd ~/GArchy && ./stage1-setup.sh
+```
 
 ---
 
@@ -144,7 +170,7 @@ What Stage 1 does:
    - Launcher: `tofi`.
    - Bar: `waybar`.
    - Audio: `pipewire`, `pipewire-pulse`, `wireplumber`, `alsa-utils`.
-   - Display manager: `sddm`.
+   - Display manager: `greetd` + `uwsm` (`sysc-greet-hyprland` greeter from AUR).
    - Font: `ttf-hack-nerd`.
 
 4. **Install AUR packages (yay)**
@@ -250,10 +276,19 @@ chmod +x build-iso.sh
 
 - Copy Arch’s official `releng` archiso profile into `./archiso-work/garchy`.
 - Copy the `GArchy` repo into the ISO under `/usr/local/share/GArchy`.
+- Enable **sshd** in the live environment and bake in your `~/.ssh/*.pub` keys
+  as root's `authorized_keys` (headless SSH access to the live system).
+- Optionally set a live root password: `GARCHY_LIVE_ROOT_PW=secret ./build-iso.sh`
+  (also enables SSH password auth in the live env).
+- Add `copytoram=y` to all boot entries, so the live system runs entirely from
+  RAM — you can `dd` the ISO **directly onto the target SSD** and then wipe
+  that same SSD from stage0 (needs ~4 GB+ RAM).
 - Drop a `/root/GARCHY-INSTALL.txt` in the live image with simple instructions.
 - Run `mkarchiso` to produce an ISO under `./out/`.
 
-You can then flash `./out/*.iso` to USB and boot from that.
+You can then flash `./out/*.iso` to USB — or directly to the target disk —
+and boot from it. For a fully headless install: boot the ISO, wait for DHCP,
+then `ssh root@<ip>` and run `/usr/local/share/GArchy/stage0-install.sh`.
 
 On your custom GArchy ISO, the rough live usage is:
 
@@ -277,7 +312,7 @@ cd /usr/local/share/GArchy
 - **Surface Devices**: Stage 0 now prompts if you're on a Surface device. If 'y', it installs the `linux-surface` kernel and configures the repository.
 - **Niri Compositor**: Added optional package lists for Niri. You can install them during Stage 1 and they will be automatically configured if your dotfiles repo contains a `niri` folder.
 - Timezone in Stage 0 is hardcoded to `Canada/Eastern`. Change `/etc/localtime` symlink there if you want a different default.
-- Swap is via swapfile on root (you can add that later in Stage 1 or manually).
+- Swap is via zram (`zram-generator`, `zram-size = ram`, zstd).
 - If you add or remove tools from your stack:
   - Update `packages/*.txt` accordingly.
   - Update `STOW_REQUIRE_CMDS` in `stage1-setup.sh` if you add new stow packages.
@@ -296,4 +331,4 @@ cd /usr/local/share/GArchy
 5. As your user (default `groot`):
    - `./stage1-setup.sh`
    - `./setup_git_identity.sh` (optional)
-6. Log in via SDDM → Hyprland and enjoy GArchy.
+6. Log in via greetd → Hyprland and enjoy GArchy.

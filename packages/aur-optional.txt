@@ -31,7 +31,7 @@ visual-studio-code-insiders-bin
 wlogout-debug
 yay-bin-debug
 tofi-debug
-zen-browser-bin   # if you want it also optional
+zen-browser-bin
 
 # Niri helpers
 xwayland-satellite-bin

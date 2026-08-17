@@ -9,3 +9,6 @@ tofi-git
 
 # Wallpaper manager
 waypaper
+
+# Greeter for greetd
+sysc-greet-hyprland

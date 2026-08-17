@@ -1,16 +1,35 @@
 #!/usr/bin/env bash
 #
-# GArchy Stage 0: Run from Arch ISO as root.
-# - Wipes a selected disk (UEFI + GPT)
-# - Creates EFI + root partitions (swap via swapfile on root)
-# - Installs base Arch with minimal packages
+# GArchy Stage 0: Base system installer.
+#
+# Run either:
+#   - from the Arch live ISO as root, or
+#   - from a running Arch host with --from-host, targeting an attached disk
+#     (e.g. an SSD in a USB enclosure) that will be moved to another machine.
+#
+# What it does:
+# - Wipes the selected disk (UEFI + GPT)
+# - Creates EFI + root partitions (swap via zram)
+# - Installs base Arch with minimal packages (GRUB, greetd, NetworkManager, sshd)
+# - Auto-detects CPU microcode (override with --ucode for cross-machine installs)
 # - Creates a user (default: groot, member of wheel)
-# - Enables sshd, NetworkManager, sddm
 # - Clones GArchy into the new user's home
+#
+# Usage:
+#   stage0-install.sh [--from-host] [--disk /dev/sdX] [--ucode amd|intel|both]
+#                     [--hostname NAME] [--user NAME] [--surface]
 #
 # WARNING: This will DESTROY all data on the selected disk.
 
 set -euo pipefail
+
+# ----- options / globals -----
+FROM_HOST=0
+DISK=""
+UCODE=""          # amd | intel | both | "" (auto-detect)
+HOSTNAME=""
+NEW_USER=""
+IS_SURFACE="n"
 
 log() {
   printf '\e[32m[GArchy/Stage0]\e[0m %s\n' "$*" >&2
@@ -20,6 +39,32 @@ err() {
   printf '\e[31m[GArchy/Stage0]\e[0m %s\n' "$*" >&2
 }
 
+usage() {
+  sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'
+  exit "${1:-0}"
+}
+
+parse_args() {
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --from-host)  FROM_HOST=1 ;;
+      --disk)       DISK="${2:?--disk requires a value}"; shift ;;
+      --ucode)      UCODE="${2:?--ucode requires amd|intel|both}"; shift ;;
+      --hostname)   HOSTNAME="${2:?--hostname requires a value}"; shift ;;
+      --user)       NEW_USER="${2:?--user requires a value}"; shift ;;
+      --surface)    IS_SURFACE="y" ;;
+      -h|--help)    usage 0 ;;
+      *)            err "Unknown option: $1"; usage 1 ;;
+    esac
+    shift
+  done
+
+  case "$UCODE" in
+    ""|amd|intel|both) ;;
+    *) err "--ucode must be amd, intel, or both (got: $UCODE)"; exit 1 ;;
+  esac
+}
+
 require_root() {
   if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
     err "Must be run as root."
@@ -27,7 +72,28 @@ require_root() {
   fi
 }
 
-require_arch_iso() {
+require_env() {
+  if ((FROM_HOST)); then
+    if [[ ! -f /etc/arch-release ]]; then
+      err "--from-host requires a running Arch Linux host."
+      exit 1
+    fi
+    if ! command -v pacstrap >/dev/null 2>&1; then
+      log "Installing arch-install-scripts (provides pacstrap/genfstab/arch-chroot)..."
+      pacman -S --needed --noconfirm arch-install-scripts
+    fi
+    # Partitioning/formatting tools the live ISO has but a host may not
+    local missing=()
+    command -v parted    >/dev/null 2>&1 || missing+=(parted)
+    command -v mkfs.fat  >/dev/null 2>&1 || missing+=(dosfstools)
+    command -v mkfs.ext4 >/dev/null 2>&1 || missing+=(e2fsprogs)
+    if ((${#missing[@]} > 0)); then
+      log "Installing missing tools: ${missing[*]}"
+      pacman -S --needed --noconfirm "${missing[@]}"
+    fi
+    return 0
+  fi
+
   if [[ ! -f /run/archiso/bootmnt/arch/aitab ]]; then
     err "This looks like it's not an Arch ISO environment. Continue anyway? [y/N]"
     read -r ans
@@ -42,11 +108,20 @@ confirm() {
 }
 
 select_disk() {
-  lsblk -dpno NAME,SIZE,TYPE | grep 'disk'
-  echo
-  read -rp "Enter target disk to WIPE (e.g. /dev/nvme0n1): " DISK
+  if [[ -z "$DISK" ]]; then
+    lsblk -dpno NAME,SIZE,TYPE,TRAN | grep 'disk'
+    echo
+    read -rp "Enter target disk to WIPE (e.g. /dev/nvme0n1): " DISK
+  fi
   if [[ -z "$DISK" || ! -b "$DISK" ]]; then
     err "Invalid disk: $DISK"
+    exit 1
+  fi
+
+  # Safety: refuse to wipe a disk that hosts a mounted filesystem
+  if lsblk -no MOUNTPOINTS "$DISK" | grep -q '\S'; then
+    err "$DISK has mounted filesystems. Refusing to continue."
+    lsblk "$DISK"
     exit 1
   fi
 
@@ -60,26 +135,56 @@ select_disk() {
 }
 
 ask_hostname() {
-  read -rp "Enter hostname [garchy]: " HOSTNAME
-  HOSTNAME=${HOSTNAME:-garchy}
+  if [[ -z "$HOSTNAME" ]]; then
+    read -rp "Enter hostname [garchy]: " HOSTNAME
+    HOSTNAME=${HOSTNAME:-garchy}
+  fi
 }
 
 ask_username() {
-  read -rp "Enter username [groot]: " NEW_USER
-  NEW_USER=${NEW_USER:-groot}
+  if [[ -z "$NEW_USER" ]]; then
+    read -rp "Enter username [groot]: " NEW_USER
+    NEW_USER=${NEW_USER:-groot}
+  fi
 }
 
 ask_surface() {
-  read -rp "Is this a Microsoft Surface device? [y/N]: " IS_SURFACE
-  IS_SURFACE=${IS_SURFACE:-n}
+  if [[ "$IS_SURFACE" != "y" ]]; then
+    read -rp "Is this a Microsoft Surface device? [y/N]: " IS_SURFACE
+    IS_SURFACE=${IS_SURFACE:-n}
+  fi
+}
+
+detect_ucode() {
+  if [[ -z "$UCODE" ]]; then
+    local vendor
+    vendor=$(grep -m1 '^vendor_id' /proc/cpuinfo | awk '{print $3}')
+    case "$vendor" in
+      AuthenticAMD) UCODE="amd" ;;
+      GenuineIntel) UCODE="intel" ;;
+      *)            UCODE="both" ;;
+    esac
+    if ((FROM_HOST)); then
+      log "NOTE: microcode auto-detected from THIS host's CPU ($UCODE)."
+      log "      If the target machine differs, re-run with --ucode amd|intel|both."
+    fi
+  fi
+
+  UCODE_PKGS=()
+  case "$UCODE" in
+    amd)   UCODE_PKGS=(amd-ucode) ;;
+    intel) UCODE_PKGS=(intel-ucode) ;;
+    both)  UCODE_PKGS=(amd-ucode intel-ucode) ;;
+  esac
+  log "Microcode: ${UCODE_PKGS[*]}"
 }
 
 partition_disk() {
   log "Partitioning $DISK (GPT, EFI + root)..."
 
-  # Wipe partition table
+  # Wipe filesystem/partition-table signatures (parted mklabel below
+  # writes the fresh GPT, so no sgdisk/gptfdisk needed)
   wipefs -af "$DISK"
-  sgdisk --zap-all "$DISK"
 
   # Create GPT: 1 - EFI (512M), 2 - root (rest)
   parted -s "$DISK" \
@@ -89,6 +194,7 @@ partition_disk() {
     mkpart "root" ext4 513MiB 100%
 
   partprobe "$DISK"
+  sleep 1
 
   EFI_PART="${DISK}p1"
   ROOT_PART="${DISK}p2"
@@ -120,11 +226,11 @@ mount_partitions() {
 
 install_base_system() {
   if [[ "$IS_SURFACE" == "y" ]]; then
-    log "Configuring linux-surface repository on live ISO..."
+    log "Configuring linux-surface repository on install host..."
     curl -s https://raw.githubusercontent.com/linux-surface/linux-surface/master/pkg/keys/surface.asc \
       | pacman-key --add -
     pacman-key --lsign-key 56C464BAAC421453
-    
+
     if ! grep -q "\[linux-surface\]" /etc/pacman.conf; then
       cat <<EOT >> /etc/pacman.conf
 
@@ -141,13 +247,17 @@ EOT
     base
     linux
     linux-firmware
-    intel-ucode
+    "${UCODE_PKGS[@]}"
+    grub
+    efibootmgr
+    zram-generator
     networkmanager
     openssh
     sudo
     git
-    sddm
+    greetd
     hyprland
+    uwsm
     reflector
     bash-completion
   )
@@ -176,16 +286,18 @@ configure_system_chroot() {
 set -euo pipefail
 
 if [[ "$IS_SURFACE" == "y" ]]; then
-  log "Configuring linux-surface repository..."
+  echo "Configuring linux-surface repository in target..."
   curl -s https://raw.githubusercontent.com/linux-surface/linux-surface/master/pkg/keys/surface.asc \
     | pacman-key --add -
   pacman-key --lsign-key 56C464BAAC421453
-  
-  cat <<EOT >> /etc/pacman.conf
+
+  if ! grep -q "\[linux-surface\]" /etc/pacman.conf; then
+    cat <<EOT >> /etc/pacman.conf
 
 [linux-surface]
 Server = https://pkg.surfacelinux.com/arch/
 EOT
+  fi
   pacman -Sy --noconfirm
 fi
 
@@ -206,41 +318,31 @@ sed -i 's/^#en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen
 locale-gen
 echo "LANG=en_US.UTF-8" > /etc/locale.conf
 
-# Enable NetworkManager, sshd, sddm
+# Swap via zram (no swapfile/partition)
+mkdir -p /etc/systemd
+cat <<EOT >/etc/systemd/zram-generator.conf
+[zram0]
+zram-size = ram
+compression-algorithm = zstd
+swap-priority = 100
+EOT
+
+# Enable NetworkManager, sshd, greetd
 systemctl enable NetworkManager
 systemctl enable sshd
-systemctl enable sddm
+systemctl enable greetd
 
 if [[ "$IS_SURFACE" == "y" ]]; then
   systemctl enable iptsd
 fi
 
-# Install bootloader (systemd-boot, UEFI only)
-bootctl --path=/boot install
-
-# Basic systemd-boot entry
-ROOT_UUID=\$(blkid -s UUID -o value "$ROOT_PART")
-KERNEL_IMG="vmlinuz-linux"
-INITRD_IMG="initramfs-linux.img"
-
-if [[ "$IS_SURFACE" == "y" ]]; then
-  KERNEL_IMG="vmlinuz-linux-surface"
-  INITRD_IMG="initramfs-linux-surface.img"
-fi
-
-cat <<BOOT >/boot/loader/entries/arch.conf
-title   Arch Linux (GArchy)
-linux   /\$KERNEL_IMG
-initrd  /intel-ucode.img
-initrd  /\$INITRD_IMG
-options root=UUID=\$ROOT_UUID rw
-BOOT
-
-cat <<LOADER >/boot/loader/loader.conf
-default arch.conf
-timeout 3
-editor  no
-LOADER
+# Install bootloader (GRUB, UEFI).
+# --removable installs to the fallback path (EFI/BOOT/BOOTX64.EFI) so the
+# disk boots on any machine without needing host NVRAM entries -- required
+# when installing from another machine (--from-host) and moving the disk.
+grub-install --target=x86_64-efi --efi-directory=/boot \
+  --bootloader-id=GArchy --removable --recheck
+grub-mkconfig -o /boot/grub/grub.cfg
 
 # Create user and enable sudo
 if ! id "$NEW_USER" >/dev/null 2>&1; then
@@ -249,8 +351,6 @@ if ! id "$NEW_USER" >/dev/null 2>&1; then
   echo "$NEW_USER:archlinux" | chpasswd
   passwd -e "$NEW_USER"  # Force password change on first login
 fi
-
-pacman -S --needed --noconfirm sudo
 
 if ! grep -qE '^%wheel\\s+ALL=\\(ALL:ALL\\)\\s+ALL' /etc/sudoers; then
   echo "%wheel ALL=(ALL:ALL) ALL" >> /etc/sudoers
@@ -261,20 +361,27 @@ EOF
 
 clone_garchy_into_new_system() {
   log "Cloning GArchy into /mnt/home/$NEW_USER/GArchy..."
+  # Clone as root then chown: 'su - user' would fail because the user's
+  # password is expired (forced change on first login).
   arch-chroot /mnt /bin/bash <<EOF
 set -euo pipefail
-su - "$NEW_USER" -c 'git clone https://github.com/madmax3553/GArchy "\$HOME/GArchy" || true'
+if [[ ! -d "/home/$NEW_USER/GArchy/.git" ]]; then
+  git clone https://github.com/madmax3553/GArchy "/home/$NEW_USER/GArchy"
+  chown -R "$NEW_USER:$NEW_USER" "/home/$NEW_USER/GArchy"
+fi
 EOF
 }
 
 main() {
+  parse_args "$@"
   require_root
-  require_arch_iso
+  require_env
 
   select_disk
   ask_hostname
   ask_username
   ask_surface
+  detect_ucode
 
   partition_disk
   format_partitions
@@ -284,10 +391,18 @@ main() {
   configure_system_chroot
   clone_garchy_into_new_system
 
-  log "Stage0 complete. You can now reboot into the new system."
-  log "After reboot, log in as $NEW_USER and run:"
-  log "  cd ~/GArchy"
-  log "  ./stage1-setup.sh"
+  umount -R /mnt || true
+
+  log "Stage0 complete."
+  if ((FROM_HOST)); then
+    log "You can now detach $DISK and boot it in the target machine."
+    log "It will come up with DHCP + sshd. Then:"
+    log "  ssh $NEW_USER@<target-ip>   (password: archlinux, change forced)"
+  else
+    log "You can now reboot into the new system, then log in as $NEW_USER."
+  fi
+  log "Finally run:"
+  log "  cd ~/GArchy && ./stage1-setup.sh"
 }
 
 main "$@"
