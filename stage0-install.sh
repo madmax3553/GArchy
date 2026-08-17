@@ -18,6 +18,10 @@
 # Usage:
 #   stage0-install.sh [--from-host] [--disk /dev/sdX] [--ucode amd|intel|both]
 #                     [--hostname NAME] [--user NAME] [--surface]
+#                     [--wifi CONNECTION_NAME]
+#
+# --wifi copies the named NetworkManager profile from this machine into the
+# target so it auto-connects on first boot (headless SSH access over wifi).
 #
 # WARNING: This will DESTROY all data on the selected disk.
 
@@ -30,6 +34,7 @@ UCODE=""          # amd | intel | both | "" (auto-detect)
 HOSTNAME=""
 NEW_USER=""
 IS_SURFACE="n"
+WIFI_PROFILE=""   # NetworkManager connection name to copy into the target
 
 log() {
   printf '\e[32m[GArchy/Stage0]\e[0m %s\n' "$*" >&2
@@ -40,7 +45,7 @@ err() {
 }
 
 usage() {
-  sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n "2,26p" "$0" | sed 's/^# \{0,1\}//'
   exit "${1:-0}"
 }
 
@@ -53,6 +58,7 @@ parse_args() {
       --hostname)   HOSTNAME="${2:?--hostname requires a value}"; shift ;;
       --user)       NEW_USER="${2:?--user requires a value}"; shift ;;
       --surface)    IS_SURFACE="y" ;;
+      --wifi)       WIFI_PROFILE="${2:?--wifi requires a connection name}"; shift ;;
       -h|--help)    usage 0 ;;
       *)            err "Unknown option: $1"; usage 1 ;;
     esac
@@ -359,6 +365,28 @@ fi
 EOF
 }
 
+copy_wifi_profile() {
+  [[ -n "$WIFI_PROFILE" ]] || return 0
+
+  local src="/etc/NetworkManager/system-connections/${WIFI_PROFILE}.nmconnection"
+  if [[ ! -f "$src" ]]; then
+    err "WiFi profile not found: $src"
+    err "Available profiles:"
+    ls /etc/NetworkManager/system-connections/ 2>/dev/null | sed 's/\.nmconnection$//; s/^/  - /' >&2
+    err "Continuing without WiFi profile."
+    return 0
+  fi
+
+  log "Copying WiFi profile '$WIFI_PROFILE' into target..."
+  local dst_dir="/mnt/etc/NetworkManager/system-connections"
+  mkdir -p "$dst_dir"
+  cp "$src" "$dst_dir/"
+  # Strip interface pinning so the profile matches the target's wifi device
+  sed -i '/^interface-name=/d' "$dst_dir/${WIFI_PROFILE}.nmconnection"
+  chmod 600 "$dst_dir/${WIFI_PROFILE}.nmconnection"
+  log "Target will auto-connect to '$WIFI_PROFILE' on boot."
+}
+
 clone_garchy_into_new_system() {
   log "Cloning GArchy into /mnt/home/$NEW_USER/GArchy..."
   # Clone as root then chown: 'su - user' would fail because the user's
@@ -389,6 +417,7 @@ main() {
   install_base_system
   generate_fstab
   configure_system_chroot
+  copy_wifi_profile
   clone_garchy_into_new_system
 
   umount -R /mnt || true
